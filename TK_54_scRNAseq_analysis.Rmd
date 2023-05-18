@@ -63,3 +63,7 @@ for (my_tissue in tissue_names){
   #print(p2 + p.umap)
 }  
 ```
+
+```{r}
+sessionInfo()
+```
