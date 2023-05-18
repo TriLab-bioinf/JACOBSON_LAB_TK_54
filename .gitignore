@@ -1,0 +1,6 @@
+*.pdf
+*.png
+.DS_Store
+.Rproj.user/
+TK_54.Rproj
+data/
