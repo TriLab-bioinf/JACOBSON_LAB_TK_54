@@ -1,0 +1,323 @@
+---
+title: 'TK_54: Analysis of scRNAseq data from mouse adipose tissue (dataset GSE157281)'
+author: "Hernan Lorenzi"
+date: "2023-05-08"
+output:
+  html_document:
+    df_print: paged
+link-citations: yes
+---
+
+Goal: to utilize a published RNA seq dataset for extracting information about the expression of some genes which are relevant to my project, mainly the purinergic receptors expression (P2Y, P2X and adenosine receptors) in mouse.
+
+### Load required libraries
+
+```{r message=FALSE}
+library(Seurat)
+library(tidyverse)
+library(cowplot)
+library(ggplot2)
+library(plot3D)
+```
+
+### Load data from manuscript
+
+[Manuscript reference](https://journals.physiology.org/doi/full/10.1152/ajpendo.00391.2020) [data source](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE157281)
+
+
+```{r scRNAseq processing pipeline}
+# 1. read raw counts ------
+counts_magic <- read.delim('./data/GSE157281_HFD.LFD.magic.txt', header = T, sep = ' ')
+counts_raw <- read.delim('./data/GSE157281_HFD.LFD.txt', header = T, sep = ' ')
+# ___create Seurat Object with count data --------
+# include only genes that are are expressed in 3 or more cells and cells with complexity of 200 genes or more
+gse <- CreateSeuratObject(counts = counts_raw, project = "GSE157281", min.cells = 3, min.features = 200)
+str(gse)
+# count matrix
+gse@assays$RNA@counts[1:10,1:10]
+
+# 2. QC --------
+gse[["percent.mt"]] <- PercentageFeatureSet(gse, pattern = "^mt-")
+str(gse)
+# Show QC metrics for the first 5 cells
+head(gse@meta.data, 5)
+
+# Add treatment groups to metadata
+gse@meta.data['groups'] <- stringr::str_remove_all(string = gse@meta.data$orig.ident, pattern = "1|2|3")
+
+
+# We filter cells that have unique feature counts over 2,500 or less than 200
+# We filter cells that have >5% mitochondrial counts
+
+# ___Visualize QC metrics as a violin plot -------
+VlnPlot(gse, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+```
+
+
+```{r}
+
+# ___feature-feature or gene-gene relationship --------
+plot1 <- FeatureScatter(gse, feature1 = "nCount_RNA", feature2 = "percent.mt")
+plot2 <- FeatureScatter(gse, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+plot1 + plot2
+```
+
+
+```{r}
+# what does plot 1 show/How to interpret plot1? what does gene-gene relationship mean? 
+
+gse <- subset(gse, subset = nFeature_RNA > 200 & nFeature_RNA < 2500 & percent.mt < 5)
+# left with 987/1176 cells
+
+
+# 3. Normalization ----------
+gse <- NormalizeData(gse, normalization.method = "LogNormalize", scale.factor = 10000)
+#str(gse)
+
+# ___identification of highly variable features ---------
+gse <- FindVariableFeatures(gse, selection.method = "vst", nfeatures = 2000)
+
+# Identify the 10 most highly variable genes
+top10 <- head(VariableFeatures(gse), 10)
+
+# ___plot variable features with and without labels ---------
+plot3 <- VariableFeaturePlot(gse)
+plot4 <- LabelPoints(plot = plot3, points = top10, repel = TRUE)
+plot3 + plot4
+```
+
+```{r}
+# 4. scaling the data (performed prior to linear dim reduction) ---------
+all.genes <- rownames(gse)
+gse <- ScaleData(gse, features = all.genes)
+
+#str(gse)
+
+
+# 5. Linear Dimensionality Reduction ----------
+#gse <- RunPCA(gse, features = VariableFeatures(object = gse))
+gse <- RunPCA(gse, features = VariableFeatures(object = gse))
+
+# ___Examine and visualize PCA results a few different ways -------
+# print(gse[["pca"]], dims = 1:4, nfeatures = 5)
+```
+```{r}
+pca_data <- tibble(as.data.frame(gse[["pca"]]@cell.embeddings)) %>%
+  mutate(groups = gse@meta.data$groups)
+
+pca_data %>% ggplot(aes(x=groups, y=PC_1, fill=groups)) + geom_boxplot() 
+pca_data %>% ggplot(aes(x=groups, y=PC_2, fill=groups)) + geom_boxplot() 
+pca_data %>% ggplot(aes(x=groups, y=PC_3, fill=groups)) + geom_boxplot()
+
+pca_data %>% ggplot(aes(x=groups, y=PC_4, fill=groups)) + geom_boxplot()
+```
+
+```{r}
+# -------- plot-1 --------
+VizDimLoadings(gse, dims = 1:3, reduction = "pca")
+
+# -------- plot-2 by diet --------
+DimPlot(gse, reduction = "pca", dims = 1:2, group.by = "groups")
+DimPlot(gse, reduction = "pca", dims = c(1,3), group.by = "groups")
+DimPlot(gse, reduction = "pca", dims = 2:3, group.by = "groups")
+DimPlot(gse, reduction = "pca", dims = c(2,4), group.by = "groups")
+
+# -------- plot-3 by sample --------
+DimPlot(gse, reduction = "pca", dims = 1:2, group.by = "orig.ident")
+DimPlot(gse, reduction = "pca", dims = c(1,3), group.by = "orig.ident")
+DimPlot(gse, reduction = "pca", dims = 2:3, group.by = "orig.ident")
+DimPlot(gse, reduction = "pca", dims = c(2,4), group.by = "orig.ident")
+
+```
+
+```{r}
+# ___plot-3 heatmap -------
+# allows for easy exploration of the primary sources of heterogeneity in a dataset
+# and can be useful when trying to decide which PCs to include for further downstream analyses
+DimHeatmap(gse, dims = 1, cells = 500, balanced = TRUE)
+DimHeatmap(gse, dims = 1:4, cells = 500, balanced = TRUE)
+```
+```{r}
+
+alb_pc1 <- tibble(PC_1 = as.data.frame(gse[["pca"]]@cell.embeddings)$PC_1,
+       Alb = gse@assays$RNA@scale.data['Alb',],
+       Diet = gse@meta.data$groups)
+
+cor.test(x = alb_pc1$Alb, y = alb_pc1$PC_1)
+
+alb_pc1 %>%
+  ggplot(aes(x=Alb, y=PC_1, col=Diet)) + geom_point()
+```
+
+```{r}
+# Add hepatocyte Zonation score (Arg1 - Cyp2e1 imputed expression levels within cells)
+# Using magic counts to replicate paper
+
+zone_diff <- counts_magic['Arg1',] - counts_magic['Cyp2e1',]
+gse@meta.data['zonation'] <- as.numeric(zone_diff[rownames(gse@meta.data)])
+gse@meta.data['zone_group'] <- ifelse(gse@meta.data['zonation'] >= (2.375 - 1.84) & gse@meta.data$groups == "LFD", 'Zone_1',
+                                      ifelse(gse@meta.data['zonation'] >= (2.35 - 1.78) & gse@meta.data$groups == "HFD", 'Zone_1',
+                                        ifelse(gse@meta.data['zonation'] >= (2.35 - 1.9) & gse@meta.data$groups == "LFD", 'Zone_2',
+                                            ifelse(gse@meta.data['zonation'] >= (2.31 - 1.9) & gse@meta.data$groups == "HFD", 'Zone_2',
+                                              'Zone_3')
+                                            )
+                                        )
+                                      )
+
+
+cyp2e1 <- counts_magic['Cyp2e1',]
+arg1 <- counts_magic['Arg1',]
+
+arg1_pc1 <- tibble(PC_1 = as.data.frame(gse[["pca"]]@cell.embeddings)$PC_1,
+                   PC_2 = as.data.frame(gse[["pca"]]@cell.embeddings)$PC_2,
+                   PC_3 = as.data.frame(gse[["pca"]]@cell.embeddings)$PC_3,
+                   PC_4 = as.data.frame(gse[["pca"]]@cell.embeddings)$PC_4,
+                   Arg1 = gse@assays$RNA@scale.data['Arg1',],
+                   Arg1_magic = as.numeric(arg1[names(gse@assays$RNA@scale.data['Arg1',])]),
+                   Cyp2e1 = gse@assays$RNA@scale.data['Cyp2e1',],
+                   Cyp2e1_magic = as.numeric(cyp2e1[names(gse@assays$RNA@scale.data['Cyp2e1',])]),
+                   Diet = gse@meta.data$groups,
+                   Zone = as.character(gse@meta.data$zone_group))
+
+# ----- correlations ------
+print(cor.test(x = arg1_pc1$Arg1, y = arg1_pc1$PC_1))
+print(cor.test(x = arg1_pc1$Arg1_magic, y = arg1_pc1$PC_1))
+print(cor.test(x = arg1_pc1$Cyp2e1, y = arg1_pc1$PC_1))
+print(cor.test(x = arg1_pc1$Cyp2e1_magic, y = arg1_pc1$PC_1))
+
+# ----- plot correlations -----
+arg1.p<- arg1_pc1 %>%
+  ggplot(aes(x=Arg1, y=PC_1, col=Diet)) + geom_point()
+cyp2e1.p<- arg1_pc1 %>%
+  ggplot(aes(x=Cyp2e1, y=PC_1, col=Diet)) + geom_point()
+
+arg1.p + cyp2e1.p
+
+arg1_magic.p<- arg1_pc1 %>%
+  ggplot(aes(x=Arg1_magic, y=PC_1, col=Diet)) + geom_point()
+cyp2e1_magic.p<- arg1_pc1 %>%
+  ggplot(aes(x=Cyp2e1_magic, y=PC_1, col=Diet)) + geom_point()
+
+arg1_magic.p + cyp2e1_magic.p
+```
+
+```{r}
+cyp2e1_arg1_magic.p <- arg1_pc1 %>%
+  ggplot(aes(x=Arg1_magic, y=Cyp2e1_magic, col=Diet)) + geom_point()
+cyp2e1_arg1_magic.p
+
+cyp2e1_arg1_magic.p <- arg1_pc1 %>%
+  ggplot(aes(x=Arg1_magic, y=Cyp2e1_magic, col=Zone)) + geom_point()
+cyp2e1_arg1_magic.p
+
+```
+
+```{r}
+scatter3D(y = arg1_pc1$PC_1, 
+          x = arg1_pc1$PC_2, 
+          z = arg1_pc1$PC_4, 
+          colvar = NULL, 
+          col = c("red","blue","green")[as.factor(arg1_pc1$Zone)], 
+          pch = 19, 
+          cex = 0.5, 
+          bty = "b2",
+          ticktype = "detailed"
+          )
+```
+```{r}
+scatter3D(y = arg1_pc1$PC_1, 
+          z = arg1_pc1$PC_2, 
+          x = arg1_pc1$PC_4, 
+          colvar = NULL, 
+          col = c("red","blue","green")[as.factor(arg1_pc1$Zone)], 
+          pch = 19, 
+          cex = 0.5, 
+          bty = "b2",
+          ticktype = "detailed",
+          theta = 125, phi = 170
+          )
+```
+```{r}
+cyp2e1_arg1_magic.p <- arg1_pc1 %>%
+  ggplot(aes(x=Arg1_magic, y=Cyp2e1_magic, col=Zone)) + geom_point()
+cyp2e1_arg1_magic.p
+
+pca.12.p <- DimPlot(gse, reduction = "pca", dims = 1:2, group.by = "zone_group")
+pca.12.p
+```
+
+
+```{r}
+# ___to dertermine "dimensionality" of the dataset -------
+# essentially determine how many PCs to consider - we would ideally want to consider PCs that show maximum variations
+
+# JackStraw Procedure!
+# identify ‘significant’ PCs as those who have a strong enrichment of low p-value features.
+# NOTE: This process can take a long time for big datasets, comment out for expediency. More
+# approximate techniques such as those implemented in ElbowPlot() can be used to reduce
+# computation time
+
+gse <- JackStraw(gse, num.replicate = 100)
+gse <- ScoreJackStraw(gse, dims = 1:20)
+
+JackStrawPlot(gse, dims = 1:15)
+# The JackStrawPlot() function provides a visualization tool for comparing the distribution of p-values for each PC with a uniform distribution (dashed line). 
+# ‘Significant’ PCs will show a strong enrichment of features with low p-values (solid curve above the dashed line).
+
+
+# An alternative heuristic method generates an ‘Elbow plot’: a ranking of principle components based on the percentage of variance explained by each one (ElbowPlot() function).
+ElbowPlot(gse)
+# from the plot, it looks like majority of true signal is captured in the first 15 PCs.
+# PCs to consider = 15
+```
+
+```{r}
+# 6. Cluster cells --------
+gse <- FindNeighbors(gse, dims = 1:4)
+
+# The FindClusters() function contains a resolution parameter that sets the ‘granularity’ of the downstream clustering, with increased values leading to a greater number of clusters. 
+# We find that setting this parameter between 0.4-1.2 typically returns good results for single-cell datasets of around 3K cells. 
+# Optimal resolution often increases for larger datasets. 
+gse <- FindClusters(gse, resolution = 0.2)
+
+# Look at cluster IDs of the first 5 cells
+#head(Idents(gse), 5)
+
+
+
+# 7. Run non-linear dimensional reduction (UMAP/tSNE) ---------
+gse <- RunUMAP(gse, dims = 1:4)
+gse <- RunTSNE(gse, dims = 1:4)
+
+# note that you can set `label = TRUE` or use the LabelClusters function to help label
+# individual clusters
+DimPlot(gse, reduction = "umap", pt.size = 2)
+DimPlot(gse, reduction = "tsne", pt.size = 2)
+
+DimPlot(gse, reduction = "umap", group.by = "orig.ident", pt.size = 2)
+DimPlot(gse, reduction = "tsne", group.by = "orig.ident", pt.size = 2)
+
+DimPlot(gse, reduction = "tsne", group.by = "zone_group", pt.size = 2)
+```
+
+### Get features of interest
+```{r}
+features = c(grep("P2RX|P2RY|ADORA1|ADORA2B|ADORA3",rownames(gse@assays$RNA@data),ignore.case = T, value = T))
+```
+
+```{r}
+umap_diet.p <- DimPlot(gse, reduction = "umap", group.by = "groups", pt.size = 1)
+umap_zone.p <- DimPlot(gse, reduction = "umap", group.by = "zone_group", pt.size = 1)
+
+feat.p <- FeaturePlot(object = gse, features = features, , pt.size = 1, order = TRUE)
+print(feat.p + umap_diet.p + umap_zone.p)
+
+ggsave2(filename = "GSE157281_umap_genes_of_int.png", plot = feat.p + umap_diet.p + umap_zone.p, width = 8, height = 8)
+
+
+```
+
+
+```{r}
+sessionInfo()
+```
