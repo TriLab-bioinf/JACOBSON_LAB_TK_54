@@ -3,15 +3,17 @@ title: 'TK_54: Analysis of scRNAseq data from mouse adipose tissue (dataset GSE1
 author: "Hernan Lorenzi"
 date: "2023-05-08"
 output:
+  pdf_document: default
   html_document:
     df_print: paged
 link-citations: yes
+editor_options:
+  chunk_output_type: inline
 ---
 
-Goal: to utilize a published RNA seq dataset for extracting information about the expression of some genes which are relevant to my project, mainly the purinergic receptors expression (P2Y, P2X and adenosine receptors) in mouse.
+Goal: to utilize a published scRNA seq dataset (GSE157281) to extract information about the expression of some genes which are relevant to Asmita's project, mainly the purinergic receptors expression (P2Y, P2X and adenosine family receptors) in mouse.
 
 ### Load required libraries
-
 ```{r message=FALSE}
 library(Seurat)
 library(tidyverse)
@@ -19,6 +21,8 @@ library(cowplot)
 library(ggplot2)
 library(plot3D)
 ```
+
+
 
 ### Load data from manuscript
 
@@ -201,6 +205,7 @@ cyp2e1_magic.p<- arg1_pc1 %>%
 arg1_magic.p + cyp2e1_magic.p
 ```
 
+# Generate scatter plot of Arg1 vs Cyp2e1 gene markers colored by diet or zone, as shown in the original paper
 ```{r}
 cyp2e1_arg1_magic.p <- arg1_pc1 %>%
   ggplot(aes(x=Arg1_magic, y=Cyp2e1_magic, col=Diet)) + geom_point()
@@ -212,6 +217,7 @@ cyp2e1_arg1_magic.p
 
 ```
 
+### Generate 3D PCA plots
 ```{r}
 scatter3D(y = arg1_pc1$PC_1, 
           x = arg1_pc1$PC_2, 
@@ -237,11 +243,9 @@ scatter3D(y = arg1_pc1$PC_1,
           theta = 125, phi = 170
           )
 ```
-```{r}
-cyp2e1_arg1_magic.p <- arg1_pc1 %>%
-  ggplot(aes(x=Arg1_magic, y=Cyp2e1_magic, col=Zone)) + geom_point()
-cyp2e1_arg1_magic.p
 
+### Plot PCA coloring by zone.
+```{r}
 pca.12.p <- DimPlot(gse, reduction = "pca", dims = 1:2, group.by = "zone_group")
 pca.12.p
 ```
@@ -273,7 +277,7 @@ ElbowPlot(gse)
 
 ```{r}
 # 6. Cluster cells --------
-gse <- FindNeighbors(gse, dims = 1:4)
+gse <- FindNeighbors(gse, dims = 1:15)
 
 # The FindClusters() function contains a resolution parameter that sets the ‘granularity’ of the downstream clustering, with increased values leading to a greater number of clusters. 
 # We find that setting this parameter between 0.4-1.2 typically returns good results for single-cell datasets of around 3K cells. 
@@ -317,6 +321,24 @@ ggsave2(filename = "GSE157281_umap_genes_of_int.png", plot = feat.p + umap_diet.
 
 ```
 
+### Find differentially expressed features (genes) across clusters (HFD vs LFD)
+```{r}
+# find diff expressed genes in cluster 0 vs cluster 1
+cluster0_vs_1.deg <- FindMarkers(gse, 
+                                 ident.1 = 0, 
+                                 ident.2 = 1, 
+                                 min.pct = 0, 
+                                 logfc.threshold = 0, 
+                                 return.thresh = 1, 
+                                 )
+head(cluster0_vs_1.deg, n = 50)
+
+# Save resutls to a file
+write.table(x = cluster0_vs_1.deg, 
+            file = "GSE157281_HFD_vs_LFD.txt", 
+            sep = "\t", col.names = NA)
+
+```
 
 ```{r}
 sessionInfo()
